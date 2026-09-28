@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 
+import matplotlib.pyplot as plt
 import mne
 import numpy as np
 
@@ -208,13 +209,33 @@ def label_ica_iclabel(
 def review_ica_interactively(
     ica: mne.preprocessing.ICA, raw: mne.io.BaseRaw
 ) -> mne.preprocessing.ICA:
-    """成分の目視確認用インタラクティブウィンドウを表示する。
+    """成分topographyと時系列の目視確認用ウィンドウを表示する。
 
     ウィンドウを閉じると選択された成分が `ica.exclude` に反映される。
     非対話環境（バッチ実行等）では呼び出さないこと。
     """
-    logger.info("画面上で除外したいノイズ成分（瞬き・心拍等）を選択し、画面を閉じてください。")
-    ica.plot_sources(raw, block=True)
+    logger.info("ICA成分のtopography一覧を表示します。波形確認中も開いたままになります。")
+    component_figures = ica.plot_components(
+        inst=raw,
+        title="ICA component topographies",
+        show=False,
+    )
+    if not isinstance(component_figures, (list, tuple)):
+        component_figures = [component_figures]
+    for figure in component_figures:
+        figure.show()
+        figure.canvas.flush_events()
+
+    logger.info(
+        "topographyを開いたまま波形を表示します。波形画面上で除外したい成分を選択し、"
+        "波形画面を閉じてください。"
+    )
+    try:
+        ica.plot_sources(raw, show=True, block=True)
+    finally:
+        # 波形レビュー終了後は、次の被験者の図と混在しないようtopographyを閉じる。
+        for figure in component_figures:
+            plt.close(figure)
     logger.info("除外対象として選択された成分: %s", ica.exclude)
     return ica
 

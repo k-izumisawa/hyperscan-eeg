@@ -43,6 +43,11 @@ def preprocess_main() -> None:
         action="store_true",
         help="MNE-ICALabelでICA成分を自動分類し、ノイズ成分を自動で除外対象にする",
     )
+    parser.add_argument(
+        "--save-montage-figures",
+        action="store_true",
+        help="個人別montageの3D・topomap確認図を保存する",
+    )
     parser.add_argument("--config-module", type=str, default="configs.gattai_hyperscan_study")
     args = parser.parse_args()
 
@@ -59,6 +64,7 @@ def preprocess_main() -> None:
         montage_cfg=cfg.MONTAGE_CFG,
         segment_plan=cfg.DESIGN.condition_segments.get(args.condition),
         ica_cfg=ica_cfg,
+        save_montage_figures=args.save_montage_figures,
     )
 
 

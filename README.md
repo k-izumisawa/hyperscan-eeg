@@ -60,6 +60,11 @@ python scripts/run_preprocessing.py
 python scripts/run_analysis.py
 ```
 
+前処理時のmontage確認図は既定では生成しない。必要な場合のみ
+`scripts/run_preprocessing.py` の `SAVE_MONTAGE_FIGURES = True`、またはCLIの
+`--save-montage-figures` を指定する。ICAの対話確認では全component topomapを
+開いたまま波形ウィンドウを表示し、波形ウィンドウを閉じるとtopomapも自動的に閉じる。
+
 3名の全ペアについて保存済みconnectivity CSVから96ノードのhyperbrain
 ネットワークを構築し、上位10%の結合に対する二値グラフ指標を算出する場合:
 
@@ -67,11 +72,26 @@ python scripts/run_analysis.py
 python scripts/run_network_analysis.py --condition speaking --segment gattai_ato --band alpha
 ```
 
+引数をすべて省略すると、実験設定にある全条件・全セグメント・全周波数帯域を
+自動巡回する。connectivity CSVが存在しない組合せは `[SKIP]` として続行する。
+不足をエラーとして扱いたい場合は `--strict` を付ける。
+
+```bash
+python scripts/run_network_analysis.py
+```
+
+設定に複数の独立したtriad（例: Pilot 1のsub01–03とPilot 2のsub04–06）が
+含まれる場合は、設定済みpairの連結成分から各triadを自動検出する。
+セグメントは `data/results/<condition>/` の実在ディレクトリから検出し、
+各triadで3ペア分のCSVが揃う組合せだけを解析する。
+
 `data/network_results/<condition>/<segment>/` に、完全隣接行列、閾値後隣接行列、
 ネットワーク指標CSV、ネットワーク図PNGを保存する。既定の閾値は絶対強度の
 90パーセンタイルであり、PLVのような非負指標に加えて符号付きPSIにも対応する。
 Global/local efficiency、clustering、path lengthは閾値後の**二値トポロジー**に
 対して算出し、path lengthは非連結時に最大連結成分を対象とする。
+ファイル名には対象被験者を
+`hyperbrain_sub04_sub05_sub06_...` の形式で記録する。
 
 既存PLV結果から発表向けに、状態・帯域別のchannel-level network、
 3名をノードとしたparticipant-level network、network metrics比較図を一括生成する場合:
@@ -80,6 +100,9 @@ Global/local efficiency、clustering、path lengthは閾値後の**二値トポ�
 python scripts/run_network_report.py --condition speaking \
     --segments gattai_mae gattai_ato
 ```
+
+引数なしの `python scripts/run_network_report.py` では、検出された全triad・
+全条件・全セグメント・全帯域についてレポートを作成する。
 
 `data/network_reports/<condition>/` に図と集計CSVを保存する。channel-level図は
 既定で上位2%のedgeに絞り、participant-level図は被験者ペア間の全channel pair

@@ -39,6 +39,7 @@ def run_subject_preprocessing(
     filter_cfg: FilterConfig = FilterConfig(),
     ica_cfg: ICAConfig = ICAConfig(),
     aux_prefixes: tuple[str, ...] = EMOTIV_AUX_CHANNEL_PREFIXES,
+    save_montage_figures: bool = False,
 ) -> Path:
     """1被験者・1条件分の生EEGデータを前処理し、fifとして保存する。
 
@@ -66,12 +67,13 @@ def run_subject_preprocessing(
 
     montage = io.build_dig_montage(subject, paths.digitizer_dir, montage_cfg)
     raw_task.set_montage(montage, match_case=False, on_missing="warn")
-    visualization.plot_montage(
-        montage,
-        title=f"sub{subject}_{condition}",
-        save_path=paths.figures_dir / condition / f"sub{subject}_montage.png",
-        show=ica_cfg.interactive,
-    )
+    if save_montage_figures:
+        visualization.plot_montage(
+            montage,
+            title=f"sub{subject}_{condition}",
+            save_path=paths.figures_dir / condition / f"sub{subject}_montage.png",
+            show=False,
+        )
 
     raw_eeg = preprocessing.select_eeg_channels(raw_task, aux_prefixes)
 
@@ -82,6 +84,11 @@ def run_subject_preprocessing(
     # ICA適用後のクリーンなデータに解析用バンドパス（既定60Hzローパス+
     # ノッチ）をかける。use_iclabel=False（手動レビューのみ）の場合は従来
     # 通り、先にバンドパスをかけてからICAをfit・適用する。
+    # fit時とapply時の参照状態を一致させるため、ICLabel使用時はICA fit用
+    # コピーだけでなく、適用先となる解析データ自体も平均参照に統一する。
+    if ica_cfg.use_iclabel:
+        raw_eeg.set_eeg_reference("average", projection=False, verbose=False)
+
     bandpass_before_ica = not ica_cfg.use_iclabel
     ica_input = (
         preprocessing.apply_bandpass_notch(raw_eeg, filter_cfg) if bandpass_before_ica else raw_eeg
