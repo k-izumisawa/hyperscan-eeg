@@ -26,6 +26,7 @@ src/hyperscan_eeg/   汎用ライブラリ本体（実験固有の値を持た�
   preprocessing.py     区間切り出し・区間分割(SegmentPlan)・フィルタ・ICA
   phase.py             2者間エポック結合（位相計算の前段）
   connectivity.py      帯域別の脳間同期指標（PLV/PSI等）算出
+  network.py           ペア別行列からhyperbrain構築・閾値処理・グラフ指標算出
   visualization.py     ヒートマップ・棒グラフ
   pipeline.py          上記を束ねる高水準オーケストレーション関数
   cli.py               CLIエントリポイント（--config-module で実験設定を切替可能）
@@ -38,6 +39,7 @@ configs/              実験固有の設定（ここが「各自で用意する�
 scripts/
   run_preprocessing.py  前処理実行スクリプト（configsを読み込んで実行）
   run_analysis.py       同期指標算出実行スクリプト（同上）
+  run_network_analysis.py  保存済みconnectivity CSVのネットワーク解析
 
 data/                 raw / digitizer / preprocessed / results / figures
 markerdata/           補正イベントCSV（例: sub04_silent.csv、存在する場合のみ優先）
@@ -57,6 +59,33 @@ CSVが存在すれば `latency`（BDF開始からの秒）と `marker_value`（�
 python scripts/run_preprocessing.py
 python scripts/run_analysis.py
 ```
+
+3名の全ペアについて保存済みconnectivity CSVから96ノードのhyperbrain
+ネットワークを構築し、上位10%の結合に対する二値グラフ指標を算出する場合:
+
+```bash
+python scripts/run_network_analysis.py --condition speaking --segment gattai_ato --band alpha
+```
+
+`data/network_results/<condition>/<segment>/` に、完全隣接行列、閾値後隣接行列、
+ネットワーク指標CSV、ネットワーク図PNGを保存する。既定の閾値は絶対強度の
+90パーセンタイルであり、PLVのような非負指標に加えて符号付きPSIにも対応する。
+Global/local efficiency、clustering、path lengthは閾値後の**二値トポロジー**に
+対して算出し、path lengthは非連結時に最大連結成分を対象とする。
+
+既存PLV結果から発表向けに、状態・帯域別のchannel-level network、
+3名をノードとしたparticipant-level network、network metrics比較図を一括生成する場合:
+
+```bash
+python scripts/run_network_report.py --condition speaking \
+    --segments gattai_mae gattai_ato
+```
+
+`data/network_reports/<condition>/` に図と集計CSVを保存する。channel-level図は
+既定で上位2%のedgeに絞り、participant-level図は被験者ペア間の全channel pair
+平均PLVをedge weightとして状態間で同一尺度・同一node配置により描画する。
+network metricsは過度に疎な図示用graphとは分け、既存解析と同じ上位10%
+（p90）の二値トポロジーから算出する。
 
 前処理済み波形を全被験者・全条件について順番に確認する場合:
 

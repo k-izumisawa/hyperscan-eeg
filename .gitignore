@@ -2,6 +2,12 @@ data/
 .venv/
 markerdata/*
 __pycache__/
+.pytest_cache/
+.coverage
+htmlcov/
+test-results/
+figures/
+tables/
 .vscode/
 logs/
 *.egg-info/
