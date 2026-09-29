@@ -38,13 +38,11 @@ MONTAGE_CFG = MontageConfig(channel_labels=EMOTIV_FLEX_SALINE_32CH_LABELS)
 
 FREQ_BANDS = STANDARD_EEG_FREQUENCY_BANDS
 
-# 被験者3名(sub01~03)による総当たり3ペアで実施した実験のため、実施したペアを
-# そのまま列挙する。総当たりでない実験構成では、以下を実施した組み合わせに
-# 差し替えること（`ExperimentDesign.pairs` は常に「実際に実施したペア」を表す）。
+# Pilot 1 (sub01~03) と Pilot 2 (sub04~06) の各triad内で実施したpairを列挙する。
 DESIGN = ExperimentDesign(
-    subjects=(4, 5, 6),
+    subjects=(1, 2, 3, 4, 5, 6),
     conditions=("silent", "speaking"),
-    pairs=((4, 5), (4, 6), (5, 6)),
+    pairs=((1, 2), (1, 3), (2, 3), (4, 5), (4, 6), (5, 6)),
     condition_segments={
         # 「合体」マーカー(3番)を境界として、silent条件は1回(2区間)、
         # speaking条件は2回(3区間)出現する、という実験固有の例外仕様。

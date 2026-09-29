@@ -8,6 +8,7 @@ htmlcov/
 test-results/
 figures/
 tables/
+docs/*checklist*
 .vscode/
 logs/
 *.egg-info/
