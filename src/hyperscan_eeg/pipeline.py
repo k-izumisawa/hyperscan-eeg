@@ -29,6 +29,34 @@ from .presets import EMOTIV_AUX_CHANNEL_PREFIXES
 logger = logging.getLogger(__name__)
 
 
+def _register_digitizer_montage(
+    raw: mne.io.BaseRaw,
+    subject: int,
+    condition: str,
+    paths: PathConfig,
+    montage_cfg: MontageConfig,
+    save_montage_figures: bool,
+) -> None:
+    """Register a subject montage when its digitizer file is available."""
+    digitizer_file = paths.digitizer_file(subject)
+    if not digitizer_file.exists():
+        logger.warning(
+            "Digitizer file not found; skipping montage registration: %s",
+            digitizer_file,
+        )
+        return
+
+    montage = io.build_dig_montage(subject, paths.digitizer_dir, montage_cfg)
+    raw.set_montage(montage, match_case=False, on_missing="warn")
+    if save_montage_figures:
+        visualization.plot_montage(
+            montage,
+            title=f"sub{subject}_{condition}",
+            save_path=paths.figures_dir / condition / f"sub{subject}_montage.png",
+            show=False,
+        )
+
+
 def run_subject_preprocessing(
     subject: int,
     condition: str,
@@ -65,15 +93,14 @@ def run_subject_preprocessing(
     )
     raw_task = preprocessing.crop_to_task_window(raw, events, marker_cfg)
 
-    montage = io.build_dig_montage(subject, paths.digitizer_dir, montage_cfg)
-    raw_task.set_montage(montage, match_case=False, on_missing="warn")
-    if save_montage_figures:
-        visualization.plot_montage(
-            montage,
-            title=f"sub{subject}_{condition}",
-            save_path=paths.figures_dir / condition / f"sub{subject}_montage.png",
-            show=False,
-        )
+    _register_digitizer_montage(
+        raw_task,
+        subject,
+        condition,
+        paths,
+        montage_cfg,
+        save_montage_figures,
+    )
 
     raw_eeg = preprocessing.select_eeg_channels(raw_task, aux_prefixes)
 
