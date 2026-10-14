@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import mne
 import numpy as np
 
-from .config import FilterConfig, ICAConfig, MarkerConfig, SegmentPlan
+from .config import FilterConfig, ICAConfig, MarkerConfig, SegmentPlan, StateEventPlan
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,138 @@ def crop_to_task_window(
     raw_task = raw.copy().crop(tmin=tmin, tmax=tmax)
     logger.info("タスク区間を切り出しました: %.2f - %.2f 秒", tmin, tmax)
     return raw_task
+
+
+def crop_from_game_start(
+    raw: mne.io.BaseRaw,
+    events: np.ndarray,
+    start_marker: int = 1,
+) -> mne.io.BaseRaw:
+    """Crop from the first game-start marker through the end of the recording."""
+    starts = events[events[:, 2] == start_marker][:, 0]
+    if len(starts) == 0:
+        raise ValueError(f"Game-start marker ({start_marker}) was not found")
+
+    sfreq = raw.info["sfreq"]
+    tmin = (starts[0] - raw.first_samp) / sfreq
+    raw_task = raw.copy().crop(tmin=tmin, tmax=raw.times[-1])
+    logger.info(
+        "Cropped game recording from marker %d at %.3f s through recording end %.3f s",
+        start_marker,
+        tmin,
+        raw.times[-1],
+    )
+    return raw_task
+
+
+def segment_by_state_events(
+    raw: mne.io.BaseRaw,
+    events: np.ndarray,
+    plan: StateEventPlan,
+) -> dict[str, mne.io.BaseRaw]:
+    """Extract repeated state intervals and overlapping event-locked windows.
+
+    Markers in ``state_labels`` define a state that lasts until the sample
+    immediately before the next state marker. By default, the final state
+    lasts through the end of the recording. If
+    ``plan.end_at_first_event_window`` is enabled, state extraction instead
+    ends ``event_window_seconds`` after the first event marker. Markers in
+    ``event_labels`` do not change the active state; each produces an
+    overlapping window beginning at the marker and lasting
+    ``event_window_seconds`` (clipped at the analysis/recording end).
+    """
+    sfreq = float(raw.info["sfreq"])
+    first_sample = raw.first_samp
+    last_sample = raw.last_samp
+    events_sorted = events[np.argsort(events[:, 0])]
+    starts = events_sorted[events_sorted[:, 2] == plan.game_start_marker]
+    if len(starts) == 0:
+        # MNE may omit an annotation exactly on the left crop boundary. State-mode
+        # preprocessed files are defined to begin at marker 1, so restore it at
+        # the first sample when loading the cropped FIF.
+        logger.warning(
+            "Game-start marker %d is absent at the cropped boundary; "
+            "assuming the first sample is the game start",
+            plan.game_start_marker,
+        )
+        synthetic_start = np.array([[first_sample, 0, plan.game_start_marker]])
+        events_sorted = np.vstack([synthetic_start, events_sorted])
+        game_start_sample = first_sample
+    else:
+        game_start_sample = int(starts[0, 0])
+    events_sorted = events_sorted[events_sorted[:, 0] >= game_start_sample]
+
+    event_samples = int(round(plan.event_window_seconds * sfreq))
+    event_events = events_sorted[
+        np.isin(events_sorted[:, 2], list(plan.event_labels))
+    ]
+    analysis_end_sample = last_sample
+    if plan.end_at_first_event_window:
+        if len(event_events) == 0:
+            logger.warning(
+                "No event marker was found; state extraction continues through "
+                "the recording end"
+            )
+        else:
+            analysis_end_sample = min(
+                int(event_events[0, 0]) + event_samples,
+                last_sample,
+            )
+            logger.info(
+                "State extraction ends %.3f s after the first event marker",
+                (analysis_end_sample - first_sample) / sfreq,
+            )
+
+    state_events = events_sorted[
+        np.isin(events_sorted[:, 2], list(plan.state_labels))
+    ]
+    if len(state_events) == 0 or int(state_events[0, 2]) != plan.game_start_marker:
+        raise ValueError("The first state marker must be the game-start marker")
+
+    segments: dict[str, mne.io.BaseRaw] = {}
+    state_counts = {label: 0 for label in plan.state_labels.values()}
+    for index, event in enumerate(state_events):
+        start_sample = int(event[0])
+        if start_sample > analysis_end_sample:
+            continue
+        marker = int(event[2])
+        end_sample = (
+            int(state_events[index + 1, 0]) - 1
+            if index + 1 < len(state_events)
+            else analysis_end_sample
+        )
+        end_sample = min(end_sample, analysis_end_sample)
+        if end_sample < start_sample:
+            continue
+        label = plan.state_labels[marker]
+        state_counts[label] += 1
+        key = f"state_{label}_{state_counts[label]:02d}"
+        tmin = (start_sample - first_sample) / sfreq
+        tmax = (end_sample - first_sample) / sfreq
+        segments[key] = raw.copy().crop(tmin=tmin, tmax=tmax)
+        logger.info("State segment '%s': %.3f - %.3f s", key, tmin, tmax)
+
+    event_counts = {label: 0 for label in plan.event_labels.values()}
+    for event in event_events[event_events[:, 0] <= analysis_end_sample]:
+        start_sample = int(event[0])
+        marker = int(event[2])
+        end_sample = min(start_sample + event_samples, analysis_end_sample, last_sample)
+        label = plan.event_labels[marker]
+        event_counts[label] += 1
+        key = f"event_{label}_{event_counts[label]:02d}"
+        tmin = (start_sample - first_sample) / sfreq
+        tmax = (end_sample - first_sample) / sfreq
+        segments[key] = raw.copy().crop(tmin=tmin, tmax=tmax)
+        if end_sample - start_sample < event_samples:
+            logger.warning(
+                "Event window '%s' was clipped at recording end (%.3f s instead of %.3f s)",
+                key,
+                (end_sample - start_sample) / sfreq,
+                plan.event_window_seconds,
+            )
+        logger.info("Event window '%s': %.3f - %.3f s", key, tmin, tmax)
+
+    return segments
 
 
 def segment_by_markers(

@@ -60,6 +60,10 @@ def subject_groups_from_pairs(
 
 def segment_sort_key(label: str) -> tuple[int, str]:
     """ゲーム状態を合体前から合体後への時間順に並べるためのキー。"""
+    if label.startswith("state_"):
+        return (10, label)
+    if label.startswith("event_"):
+        return (20, label)
     if label == "gattai_mae":
         return (0, label)
     if label == "gattai_ato":

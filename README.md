@@ -42,16 +42,27 @@ scripts/
   run_network_analysis.py  保存済みconnectivity CSVのネットワーク解析
 
 data/                 raw / digitizer / preprocessed / results / figures
-markerdata/           補正イベントCSV（例: sub04_silent.csv、存在する場合のみ優先）
+markerdata/           補正イベントCSV（例: sub07_session01_speaking.csv）
 ```
 
 ## 補正イベントCSV
 
-イベントに異常があるBDFだけ、`markerdata/subNN_condition.csv` を配置する。
+イベントに異常があるBDFだけ、`markerdata/subNN_sessionNN_condition.csv` を配置する。
 CSVが存在すれば `latency`（BDF開始からの秒）と `marker_value`（イベントID）
 からイベントを作成し、存在しなければBDF内Annotationsを使用する。補正イベントは
-前処理済みFIFのAnnotationsにも保存される。解析対象外のマーカーは、設定された
-開始・終了・境界マーカーに基づいて除外される。
+前処理済みFIFのAnnotationsにも保存される。
+
+現行ゲームでは、生データを
+`data/raw/speaking/subNN_sessionNN.bdf` の形式で保存する。同じsubjectの複数sessionは
+ファイル名から自動検出され、前処理・PLV・network解析の出力もsession別に保存される。
+入力BDFは`sub7_session1.bdf`のようなゼロ埋めなしの名前も認識し、出力名は
+`sub07_session01_...`へ統一する。
+
+状態マーカーは、1=両チーム未合体、2=自チームのみ合体、3=両チーム合体、
+4=相手チームのみ合体である。各状態は次の状態マーカーまで継続する。現行設定では
+最初の5または6から8秒後を状態解析全体の終端とする。5（自チーム必殺技）と
+6（相手必殺技）は状態を変更せず、マーカー時刻から8秒間（3秒のカウントダウン＋
+結果決定後5秒）を重複可能なevent窓として抽出する。
 
 ## 実行
 
@@ -69,7 +80,7 @@ python scripts/run_analysis.py
 ネットワークを構築し、上位10%の結合に対する二値グラフ指標を算出する場合:
 
 ```bash
-python scripts/run_network_analysis.py --condition speaking --segment gattai_ato --band alpha
+python scripts/run_network_analysis.py --condition speaking --session 1 --band alpha
 ```
 
 引数をすべて省略すると、実験設定にある全条件・全セグメント・全周波数帯域を
@@ -82,10 +93,10 @@ python scripts/run_network_analysis.py
 
 設定に複数の独立したtriad（例: Pilot 1のsub01–03とPilot 2のsub04–06）が
 含まれる場合は、設定済みpairの連結成分から各triadを自動検出する。
-セグメントは `data/results/<condition>/` の実在ディレクトリから検出し、
+sessionとセグメントは `data/results/<condition>/sessionNN/` から検出し、
 各triadで3ペア分のCSVが揃う組合せだけを解析する。
 
-`data/network_results/<condition>/<segment>/` に、完全隣接行列、閾値後隣接行列、
+`data/network_results/<condition>/sessionNN/<segment>/` に、完全隣接行列、閾値後隣接行列、
 ネットワーク指標CSV、ネットワーク図PNGを保存する。既定の閾値は絶対強度の
 90パーセンタイルであり、PLVのような非負指標に加えて符号付きPSIにも対応する。
 Global/local efficiency、clustering、path lengthは閾値後の**二値トポロジー**に
@@ -97,14 +108,13 @@ Global/local efficiency、clustering、path lengthは閾値後の**二値トポ�
 3名をノードとしたparticipant-level network、network metrics比較図を一括生成する場合:
 
 ```bash
-python scripts/run_network_report.py --condition speaking \
-    --segments gattai_mae gattai_ato
+python scripts/run_network_report.py --condition speaking --session 1
 ```
 
 引数なしの `python scripts/run_network_report.py` では、検出された全triad・
 全条件・全セグメント・全帯域についてレポートを作成する。
 
-`data/network_reports/<condition>/` に図と集計CSVを保存する。channel-level図は
+`data/network_reports/<subject-group>/<condition>/sessionNN/` に図と集計CSVを保存する。channel-level図は
 既定で上位2%のedgeに絞り、participant-level図は被験者ペア間の全channel pair
 平均PLVをedge weightとして状態間で同一尺度・同一node配置により描画する。
 network metricsは過度に疎な図示用graphとは分け、既存解析と同じ上位10%
@@ -126,17 +136,24 @@ python scripts/review_preprocessed.py
 同期指標の種類（PLV/PSI等）や区間分割の有無など、実行そのものに関わる
 制御パラメータは各スクリプト冒頭の `# ==== 実行制御パラメータ ====`
 ブロックを編集する。
+前処理の平均参照は `APPLY_AVERAGE_REFERENCE` で制御し、ICLabelの使用有無とは
+独立して設定する。ICLabelを使用する場合は、その前提に合わせて平均参照を有効にする。
+個人別digitizerファイルがない場合は、電極名に基づいてMNEの`standard_1020`
+モンタージュを自動適用する。
 
 ## 別の実験への転用
 
 1. `configs/gattai_hyperscan_study.py` を複製し、新しいファイル名で保存する
    （例: `configs/my_other_study.py`）。
 2. `ExperimentDesign`（被験者・実施したペア・条件・ゲーム状態の区間分割）、
-   `MarkerConfig`（マーカーコード）、`MontageConfig`（電極配置）を
+   `StateEventPlan`または`MarkerConfig`（マーカーコード）、`MontageConfig`（電極配置）を
    自分の実験の値に書き換える。
    - `pairs` は総当たりを仮定せず、実際に実施したペアを列挙する
      （総当たりの場合のみ `all_subject_pairs()` を利用してよい）。
    - `condition_segments` は `SegmentPlan(labels=..., boundary_markers=...)` で
      境界マーカーとラベルを対応付ける。状態数が増減しても、この定義を
      差し替えるだけで対応できる。
+   - 状態遷移型の課題は `state_event_plans` に `StateEventPlan` を設定する。
+     `end_at_first_event_window=True` の場合、最初のevent markerから
+     `event_window_seconds` 後を状態解析の終端とする。
 3. `scripts/*.py` のインポート元を新しい設定ファイルに変更する。

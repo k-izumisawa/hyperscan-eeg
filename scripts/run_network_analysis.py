@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -40,6 +41,13 @@ def parse_args() -> argparse.Namespace:
         nargs="+",
         default=None,
         help="結果ディレクトリ内の区間名。省略時は各条件の設定にある全区間",
+    )
+    parser.add_argument(
+        "--session",
+        nargs="+",
+        type=int,
+        default=None,
+        help="対象session番号。省略時はresults内の全sessionを自動検出",
     )
     parser.add_argument(
         "--band",
@@ -77,75 +85,97 @@ def main() -> None:
     completed = 0
     skipped = 0
     for condition in args.condition:
-        if args.segment is None:
-            condition_dir = PATHS.results_dir / condition
-            segments = (
-                sorted(
-                    (path.name for path in condition_dir.iterdir() if path.is_dir()),
-                    key=segment_sort_key,
-                )
-                if condition_dir.exists()
-                else []
-            )
-            if not segments:
-                plan = DESIGN.condition_segments.get(condition)
-                segments = list(plan.labels) if plan is not None else ["whole_task"]
+        condition_dir = PATHS.results_dir / condition
+        if args.session is not None:
+            session_roots: list[tuple[int | None, Path]] = [
+                (session, condition_dir / f"session{session:02d}")
+                for session in args.session
+            ]
         else:
-            segments = args.segment
+            discovered = []
+            if condition_dir.exists():
+                for path in condition_dir.iterdir():
+                    match = re.fullmatch(r"session(\d+)", path.name)
+                    if path.is_dir() and match:
+                        discovered.append((int(match.group(1)), path))
+            session_roots = sorted(discovered)
+            if not session_roots:
+                session_roots = [(None, condition_dir)]
 
-        for subjects in subject_groups:
-            subject_label = "_".join(f"sub{subject:02d}" for subject in subjects)
-            group_pairs = tuple(
-                (subject_a, subject_b)
-                for index, subject_a in enumerate(subjects)
-                for subject_b in subjects[index + 1 :]
-            )
-            for segment in segments:
-                for band in args.band:
-                    pair_files = {
-                        pair: PATHS.results_dir
-                        / condition
+        for session, result_root in session_roots:
+            if args.segment is None:
+                segments = (
+                    sorted(
+                        (path.name for path in result_root.iterdir() if path.is_dir()),
+                        key=segment_sort_key,
+                    )
+                    if result_root.exists()
+                    else []
+                )
+                if not segments and session is None:
+                    plan = DESIGN.condition_segments.get(condition)
+                    segments = list(plan.labels) if plan is not None else ["whole_task"]
+            else:
+                segments = args.segment
+
+            session_label = f"session{session:02d}" if session is not None else "legacy"
+            for subjects in subject_groups:
+                subject_label = "_".join(f"sub{subject:02d}" for subject in subjects)
+                group_pairs = tuple(
+                    (subject_a, subject_b)
+                    for index, subject_a in enumerate(subjects)
+                    for subject_b in subjects[index + 1 :]
+                )
+                for segment in segments:
+                    for band in args.band:
+                        pair_files = {
+                            pair: result_root
                         / segment
                         / f"pair_{pair[0]:02d}_{pair[1]:02d}_{args.method}_{band}.csv"
-                        for pair in group_pairs
-                    }
-                    missing = [path for path in pair_files.values() if not path.exists()]
-                    if missing:
-                        message = (
-                            f"入力CSV不足: {subject_label} / {condition} / {segment} / "
-                            f"{band} ({len(missing)}件)"
+                            for pair in group_pairs
+                        }
+                        missing = [path for path in pair_files.values() if not path.exists()]
+                        if missing:
+                            message = (
+                                f"入力CSV不足: {subject_label} / {condition} / {session_label} / "
+                                f"{segment} / {band} ({len(missing)}件)"
+                            )
+                            if args.strict:
+                                raise FileNotFoundError(f"{message}: {missing}")
+                            print(f"[SKIP] {message}")
+                            skipped += 1
+                            continue
+
+                        output_stem = (
+                            f"hyperbrain_{subject_label}_{args.method}_{band}_p{args.percentile:g}"
                         )
-                        if args.strict:
-                            raise FileNotFoundError(f"{message}: {missing}")
-                        print(f"[SKIP] {message}")
-                        skipped += 1
-                        continue
+                        output_dir = Path("data/network_results") / condition
+                        if session is not None:
+                            output_dir = output_dir / session_label
+                        output_dir = output_dir / segment
+                        title = (
+                            f"Hyperbrain Network: {subject_label} / {args.method.upper()} / "
+                            f"{band} / {condition} / {session_label} / {segment} "
+                            f"(p{args.percentile:g})"
+                        )
 
-                    output_stem = (
-                        f"hyperbrain_{subject_label}_{args.method}_{band}_p{args.percentile:g}"
-                    )
-                    output_dir = Path("data/network_results") / condition / segment
-                    title = (
-                        f"Hyperbrain Network: {subject_label} / {args.method.upper()} / "
-                        f"{band} / {condition} / {segment} (p{args.percentile:g})"
-                    )
-
-                    metrics = analyze_hyperbrain_network(
-                        subjects=subjects,
-                        pair_files=pair_files,
-                        output_dir=output_dir,
-                        output_stem=output_stem,
-                        title=title,
-                        percentile=args.percentile,
-                        by_absolute_value=not args.signed_threshold,
-                        show=args.show,
-                    )
-                    completed += 1
-                    print(
-                        f"[DONE] {subject_label} / {condition} / {segment} / {band}: "
-                        f"nodes={metrics.n_nodes}, edges={metrics.n_edges}, "
-                        f"threshold={metrics.threshold:.6g}, outputs={output_dir}"
-                    )
+                        metrics = analyze_hyperbrain_network(
+                            subjects=subjects,
+                            pair_files=pair_files,
+                            output_dir=output_dir,
+                            output_stem=output_stem,
+                            title=title,
+                            percentile=args.percentile,
+                            by_absolute_value=not args.signed_threshold,
+                            show=args.show,
+                        )
+                        completed += 1
+                        print(
+                            f"[DONE] {subject_label} / {condition} / {session_label} / "
+                            f"{segment} / {band}: nodes={metrics.n_nodes}, "
+                            f"edges={metrics.n_edges}, threshold={metrics.threshold:.6g}, "
+                            f"outputs={output_dir}"
+                        )
 
     print(f"[SUMMARY] completed={completed}, skipped={skipped}")
 

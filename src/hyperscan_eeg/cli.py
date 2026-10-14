@@ -37,12 +37,20 @@ def preprocess_main() -> None:
     parser = argparse.ArgumentParser(description="EEGハイパースキャニングデータの前処理")
     parser.add_argument("--subject", type=int, required=True)
     parser.add_argument("--condition", type=str, required=True)
+    parser.add_argument("--session", type=int)
     parser.add_argument("--non-interactive", action="store_true", help="ICA成分の目視確認を省略する")
     parser.add_argument(
         "--use-iclabel",
         action="store_true",
         help="MNE-ICALabelでICA成分を自動分類し、ノイズ成分を自動で除外対象にする",
     )
+    parser.add_argument(
+        "--no-average-reference",
+        action="store_false",
+        dest="apply_average_reference",
+        help="平均参照を適用せず、装置のnative referenceを維持する（ICLabelとは併用不可）",
+    )
+    parser.set_defaults(apply_average_reference=True)
     parser.add_argument(
         "--save-montage-figures",
         action="store_true",
@@ -64,7 +72,10 @@ def preprocess_main() -> None:
         montage_cfg=cfg.MONTAGE_CFG,
         segment_plan=cfg.DESIGN.condition_segments.get(args.condition),
         ica_cfg=ica_cfg,
+        apply_average_reference=args.apply_average_reference,
         save_montage_figures=args.save_montage_figures,
+        session=args.session,
+        state_event_plan=cfg.DESIGN.state_event_plans.get(args.condition),
     )
 
 
@@ -73,6 +84,7 @@ def analyze_main() -> None:
     parser.add_argument("--sub-a", type=int, required=True)
     parser.add_argument("--sub-b", type=int, required=True)
     parser.add_argument("--condition", type=str, required=True)
+    parser.add_argument("--session", type=int)
     parser.add_argument("--method", type=str, default="plv")
     parser.add_argument("--segment", action="store_true", help="ゲーム状態ごとに区間分割して算出する")
     parser.add_argument("--config-module", type=str, default="configs.gattai_hyperscan_study")
@@ -80,7 +92,8 @@ def analyze_main() -> None:
 
     setup_logging()
     cfg = _load_config_module(args.config_module)
-    segment_plan = cfg.DESIGN.condition_segments[args.condition] if args.segment else None
+    segment_plan = cfg.DESIGN.condition_segments.get(args.condition) if args.segment else None
+    state_event_plan = cfg.DESIGN.state_event_plans.get(args.condition) if args.segment else None
 
     run_pair_connectivity(
         pair=(args.sub_a, args.sub_b),
@@ -89,4 +102,6 @@ def analyze_main() -> None:
         bands=cfg.FREQ_BANDS,
         segment_plan=segment_plan,
         method=args.method,
+        session=args.session,
+        state_event_plan=state_event_plan,
     )

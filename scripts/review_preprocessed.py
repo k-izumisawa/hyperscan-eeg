@@ -42,6 +42,13 @@ def parse_args() -> argparse.Namespace:
         help="表示する条件（既定: 設定ファイルの全条件）",
     )
     parser.add_argument(
+        "--sessions",
+        type=int,
+        nargs="+",
+        default=None,
+        help="表示するsession番号。省略時はrawデータから自動検出",
+    )
+    parser.add_argument(
         "--start",
         type=float,
         default=0.0,
@@ -85,24 +92,30 @@ def main() -> None:
 
     for condition in args.conditions:
         for subject in args.subjects:
-            path = PATHS.preprocessed_file(subject, condition)
-            if not path.exists():
-                print(f"[SKIP] 前処理済みファイルがありません: {path}")
-                missing.append(path)
-                continue
+            if condition in DESIGN.state_event_plans:
+                sessions: tuple[int | None, ...] = tuple(args.sessions or PATHS.raw_sessions(subject, condition))
+            else:
+                sessions = (None,)
+            for session in sessions:
+                path = PATHS.preprocessed_file(subject, condition, session)
+                if not path.exists():
+                    print(f"[SKIP] 前処理済みファイルがありません: {path}")
+                    missing.append(path)
+                    continue
 
-            print(f"[OPEN] subject{subject} / {condition}: {path}")
-            raw = mne.io.read_raw_fif(path, preload=False, verbose=False)
-            max_start = max(0.0, raw.times[-1] - min(args.duration, raw.times[-1]))
-            start = min(max(args.start, 0.0), max_start)
-            raw.plot(
-                start=start,
-                duration=min(args.duration, raw.times[-1]),
-                n_channels=min(args.n_channels, len(raw.ch_names)),
-                scalings=scalings,
-                title=f"subject{subject} / {condition} / preprocessed",
-                block=True,
-            )
+                session_label = f"session{session:02d}" if session is not None else "legacy"
+                print(f"[OPEN] subject{subject} / {condition} / {session_label}: {path}")
+                raw = mne.io.read_raw_fif(path, preload=False, verbose=False)
+                max_start = max(0.0, raw.times[-1] - min(args.duration, raw.times[-1]))
+                start = min(max(args.start, 0.0), max_start)
+                raw.plot(
+                    start=start,
+                    duration=min(args.duration, raw.times[-1]),
+                    n_channels=min(args.n_channels, len(raw.ch_names)),
+                    scalings=scalings,
+                    title=f"subject{subject} / {condition} / {session_label} / preprocessed",
+                    block=True,
+                )
 
     if missing:
         print(f"[DONE] 表示完了（未作成のためスキップ: {len(missing)}件）")

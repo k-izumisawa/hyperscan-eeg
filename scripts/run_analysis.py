@@ -33,22 +33,48 @@ def main() -> None:
     setup_logging(log_file=Path("logs/analysis.log"))
 
     for condition in DESIGN.conditions:
-        segment_plan = DESIGN.condition_segments[condition] if SEGMENT_BY_GAME_STATE else None
+        segment_plan = (
+            DESIGN.condition_segments.get(condition) if SEGMENT_BY_GAME_STATE else None
+        )
+        state_event_plan = (
+            DESIGN.state_event_plans.get(condition) if SEGMENT_BY_GAME_STATE else None
+        )
 
         for pair in DESIGN.pairs:
-            try:
-                run_pair_connectivity(
-                    pair=pair,
-                    condition=condition,
-                    paths=PATHS,
-                    bands=FREQ_BANDS,
-                    segment_plan=segment_plan,
-                    method=METHOD,
-                    save_figures=SAVE_FIGURES,
-                )
-            except (FileNotFoundError, ValueError) as exc:
-                logger.error("pair%s / %s の同期指標算出に失敗しました: %s", pair, condition, exc)
-                continue
+            if state_event_plan is not None:
+                sessions_a = set(PATHS.raw_sessions(pair[0], condition))
+                sessions_b = set(PATHS.raw_sessions(pair[1], condition))
+                sessions: tuple[int | None, ...] = tuple(sorted(sessions_a & sessions_b))
+                if not sessions:
+                    logger.warning(
+                        "pair%s / %s: 共通sessionがないためスキップします", pair, condition
+                    )
+                    continue
+            else:
+                sessions = (None,)
+
+            for session in sessions:
+                try:
+                    run_pair_connectivity(
+                        pair=pair,
+                        condition=condition,
+                        paths=PATHS,
+                        bands=FREQ_BANDS,
+                        segment_plan=segment_plan,
+                        method=METHOD,
+                        save_figures=SAVE_FIGURES,
+                        session=session,
+                        state_event_plan=state_event_plan,
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    logger.error(
+                        "pair%s / %s / session%s の同期指標算出に失敗しました: %s",
+                        pair,
+                        condition,
+                        session,
+                        exc,
+                    )
+                    continue
 
     logger.info("すべてのペア・条件の同期指標算出が完了しました。")
 

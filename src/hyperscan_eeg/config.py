@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import Sequence
 
 import numpy as np
@@ -49,17 +50,59 @@ class PathConfig:
     results_dir: Path = Path("data/results")
     figures_dir: Path = Path("data/figures")
 
-    def raw_file(self, subject: int, condition: str) -> Path:
-        return self.raw_dir / condition / f"sub{subject}.bdf"
+    def raw_file(
+        self, subject: int, condition: str, session: int | None = None
+    ) -> Path:
+        if session is None:
+            return self.raw_dir / condition / f"sub{subject}.bdf"
+        directory = self.raw_dir / condition
+        candidates = (
+            directory / f"sub{subject:02d}_session{session:02d}.bdf",
+            directory / f"sub{subject}_session{session}.bdf",
+            directory / f"sub{subject:02d}_session{session}.bdf",
+            directory / f"sub{subject}_session{session:02d}.bdf",
+        )
+        return next((path for path in candidates if path.exists()), candidates[0])
 
-    def marker_file(self, subject: int, condition: str) -> Path:
-        return self.marker_dir / f"sub{subject:02d}_{condition}.csv"
+    def marker_file(
+        self, subject: int, condition: str, session: int | None = None
+    ) -> Path:
+        if session is None:
+            return self.marker_dir / f"sub{subject:02d}_{condition}.csv"
+        candidates = (
+            self.marker_dir
+            / f"sub{subject:02d}_session{session:02d}_{condition}.csv",
+            self.marker_dir / f"sub{subject}_session{session}_{condition}.csv",
+            self.marker_dir / f"sub{subject:02d}_session{session}_{condition}.csv",
+            self.marker_dir / f"sub{subject}_session{session:02d}_{condition}.csv",
+        )
+        return next((path for path in candidates if path.exists()), candidates[0])
 
     def digitizer_file(self, subject: int) -> Path:
         return self.digitizer_dir / f"sub{subject}.TXT"
 
-    def preprocessed_file(self, subject: int, condition: str) -> Path:
-        return self.preprocessed_dir / f"sub{subject}_{condition}_preprocessed_raw.fif"
+    def preprocessed_file(
+        self, subject: int, condition: str, session: int | None = None
+    ) -> Path:
+        if session is None:
+            return self.preprocessed_dir / f"sub{subject}_{condition}_preprocessed_raw.fif"
+        return (
+            self.preprocessed_dir
+            / f"sub{subject:02d}_session{session:02d}_{condition}_preprocessed_raw.fif"
+        )
+
+    def raw_sessions(self, subject: int, condition: str) -> tuple[int, ...]:
+        """Return available ``subXX_sessionXX.bdf`` session numbers."""
+        directory = self.raw_dir / condition
+        pattern = re.compile(
+            rf"^sub0*{subject}_session0*(\d+)\.bdf$", re.IGNORECASE
+        )
+        sessions = {
+            int(match.group(1))
+            for path in directory.glob("*.bdf")
+            if (match := pattern.match(path.name)) is not None
+        }
+        return tuple(sorted(sessions))
 
 
 @dataclass(frozen=True)
@@ -100,6 +143,32 @@ class SegmentPlan:
 
 
 @dataclass(frozen=True)
+class StateEventPlan:
+    """Marker-driven game states and overlapping event-analysis windows."""
+
+    state_labels: dict[int, str]
+    event_labels: dict[int, str]
+    game_start_marker: int = 1
+    event_window_seconds: float = 8.0
+    end_at_first_event_window: bool = False
+
+    def __post_init__(self) -> None:
+        if self.game_start_marker not in self.state_labels:
+            raise ValueError("game_start_marker must be included in state_labels")
+        if set(self.state_labels).intersection(self.event_labels):
+            raise ValueError("state marker IDs and event marker IDs must not overlap")
+        labels = [*self.state_labels.values(), *self.event_labels.values()]
+        if len(labels) != len(set(labels)):
+            raise ValueError("state/event labels must be unique")
+        if self.event_window_seconds <= 0:
+            raise ValueError("event_window_seconds must be positive")
+
+    @property
+    def marker_ids(self) -> set[int]:
+        return set(self.state_labels) | set(self.event_labels)
+
+
+@dataclass(frozen=True)
 class ExperimentDesign:
     """被験者・ペア対応・条件（yy）・ゲーム状態（zz）の対応関係。
 
@@ -113,6 +182,7 @@ class ExperimentDesign:
     conditions: tuple[str, ...]
     pairs: tuple[tuple[int, int], ...]
     condition_segments: dict[str, SegmentPlan]
+    state_event_plans: dict[str, StateEventPlan] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -145,6 +215,7 @@ class MontageConfig:
     channel_labels: tuple[str, ...]
     n_landmarks: int = 5
     scale_to_meters: float = 100.0  # デジタイザ生データの単位（cm想定）に応じて調整
+    fallback_standard_montage: str = "standard_1020"
 
 
 @dataclass(frozen=True)

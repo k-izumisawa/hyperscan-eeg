@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -50,6 +51,13 @@ def parse_args() -> argparse.Namespace:
         help="比較する区間名。省略時はresults内の全セグメント",
     )
     parser.add_argument(
+        "--session",
+        nargs="+",
+        type=int,
+        default=None,
+        help="対象session番号。省略時はresults内の全sessionを自動検出",
+    )
+    parser.add_argument(
         "--bands",
         nargs="+",
         default=[band.name for band in FREQ_BANDS],
@@ -79,14 +87,13 @@ def parse_args() -> argparse.Namespace:
 
 def _pair_files(
     pairs: tuple[tuple[int, int], ...],
-    condition: str,
+    result_root: Path,
     segment: str,
     band: str,
     method: str,
 ) -> dict[tuple[int, int], Path]:
     return {
-        pair: PATHS.results_dir
-        / condition
+        pair: result_root
         / segment
         / f"pair_{pair[0]:02d}_{pair[1]:02d}_{method}_{band}.csv"
         for pair in pairs
@@ -109,97 +116,118 @@ def main() -> None:
             for subject_b in subjects[index + 1 :]
         )
         for condition in args.condition:
-            if args.segments is None:
-                condition_dir = PATHS.results_dir / condition
-                segments = (
-                    sorted(
-                        (path.name for path in condition_dir.iterdir() if path.is_dir()),
-                        key=segment_sort_key,
-                    )
-                    if condition_dir.exists()
-                    else []
-                )
+            condition_dir = PATHS.results_dir / condition
+            if args.session is not None:
+                session_roots: list[tuple[int | None, Path]] = [
+                    (session, condition_dir / f"session{session:02d}")
+                    for session in args.session
+                ]
             else:
-                segments = args.segments
+                discovered = []
+                if condition_dir.exists():
+                    for path in condition_dir.iterdir():
+                        match = re.fullmatch(r"session(\d+)", path.name)
+                        if path.is_dir() and match:
+                            discovered.append((int(match.group(1)), path))
+                session_roots = sorted(discovered)
+                if not session_roots:
+                    session_roots = [(None, condition_dir)]
 
-            output_dir = args.output_dir / subject_label / condition
-            metrics_rows: list[dict[str, int | float | bool | str]] = []
-            participant_graphs_by_band: dict[str, dict] = {
-                band: {} for band in args.bands
-            }
-
-            for band in args.bands:
-                for segment in segments:
-                    pair_files = _pair_files(
-                        group_pairs, condition, segment, band, args.method
-                    )
-                    missing = [path for path in pair_files.values() if not path.exists()]
-                    if missing:
-                        message = (
-                            f"入力CSV不足: {subject_label} / {condition} / {segment} / "
-                            f"{band} ({len(missing)}件)"
+            for session, result_root in session_roots:
+                if args.segments is None:
+                    segments = (
+                        sorted(
+                            (path.name for path in result_root.iterdir() if path.is_dir()),
+                            key=segment_sort_key,
                         )
-                        if args.strict:
-                            raise FileNotFoundError(f"{message}: {missing}")
-                        print(f"[SKIP] {message}")
-                        skipped += 1
-                        continue
+                        if result_root.exists()
+                        else []
+                    )
+                else:
+                    segments = args.segments
 
-                    stem = (
-                        f"{subject_label}_{segment}_{args.method}_{band}_p{args.percentile:g}"
-                    )
-                    metrics, participant_graph, _ = analyze_network_for_report(
-                        subjects=subjects,
-                        pair_files=pair_files,
-                        output_dir=output_dir / segment,
-                        output_stem=stem,
-                        title=(
-                            f"Channel-level network: {subject_label} / "
-                            f"{args.method.upper()} / {band} / {condition} / {segment} "
-                            f"(p{args.percentile:g})"
-                        ),
-                        percentile=args.percentile,
-                        metrics_percentile=args.metrics_percentile,
-                    )
-                    metrics_rows.append(
-                        {
-                            "subjects": subject_label,
-                            "condition": condition,
-                            "segment": segment,
-                            "band": band,
-                            **metrics.as_dict(),
-                        }
-                    )
-                    participant_graphs_by_band[band][segment] = participant_graph
-                    completed += 1
+                session_label = f"session{session:02d}" if session is not None else "legacy"
+                output_dir = args.output_dir / subject_label / condition
+                if session is not None:
+                    output_dir = output_dir / session_label
+                metrics_rows: list[dict[str, int | float | bool | str]] = []
+                participant_graphs_by_band: dict[str, dict] = {
+                    band: {} for band in args.bands
+                }
 
-                if participant_graphs_by_band[band]:
-                    figure = plot_participant_network_comparison(
-                        participant_graphs_by_band[band],
-                        subjects,
-                        title=(
-                            f"Participant-level mean {args.method.upper()} / {band} / "
-                            f"{condition} / {subject_label}"
-                        ),
-                        save_path=(
-                            output_dir
-                            / f"participant_network_{subject_label}_{args.method}_{band}.png"
-                        ),
+                for band in args.bands:
+                    for segment in segments:
+                        pair_files = _pair_files(
+                            group_pairs, result_root, segment, band, args.method
+                        )
+                        missing = [path for path in pair_files.values() if not path.exists()]
+                        if missing:
+                            message = (
+                                f"入力CSV不足: {subject_label} / {condition} / "
+                                f"{session_label} / {segment} / {band} ({len(missing)}件)"
+                            )
+                            if args.strict:
+                                raise FileNotFoundError(f"{message}: {missing}")
+                            print(f"[SKIP] {message}")
+                            skipped += 1
+                            continue
+
+                        stem = (
+                            f"{subject_label}_{segment}_{args.method}_{band}_p{args.percentile:g}"
+                        )
+                        metrics, participant_graph, _ = analyze_network_for_report(
+                            subjects=subjects,
+                            pair_files=pair_files,
+                            output_dir=output_dir / segment,
+                            output_stem=stem,
+                            title=(
+                                f"Channel-level network: {subject_label} / "
+                                f"{args.method.upper()} / {band} / {condition} / "
+                                f"{session_label} / {segment} (p{args.percentile:g})"
+                            ),
+                            percentile=args.percentile,
+                            metrics_percentile=args.metrics_percentile,
+                        )
+                        metrics_rows.append(
+                            {
+                                "subjects": subject_label,
+                                "condition": condition,
+                                "session": session_label,
+                                "segment": segment,
+                                "band": band,
+                                **metrics.as_dict(),
+                            }
+                        )
+                        participant_graphs_by_band[band][segment] = participant_graph
+                        completed += 1
+
+                    if participant_graphs_by_band[band]:
+                        figure = plot_participant_network_comparison(
+                            participant_graphs_by_band[band],
+                            subjects,
+                            title=(
+                                f"Participant-level mean {args.method.upper()} / {band} / "
+                                f"{condition} / {session_label} / {subject_label}"
+                            ),
+                            save_path=(
+                                output_dir
+                                / f"participant_network_{subject_label}_{args.method}_{band}.png"
+                            ),
+                        )
+                        plt.close(figure)
+
+                if metrics_rows:
+                    metrics_frame = pd.DataFrame(metrics_rows)
+                    metrics_path = output_dir / "network_metrics_by_segment_band.csv"
+                    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+                    metrics_frame.to_csv(metrics_path, index=False)
+                    figure = plot_network_metrics(
+                        metrics_frame,
+                        output_dir / "network_metrics_by_segment_band.png",
                     )
                     plt.close(figure)
-
-            if metrics_rows:
-                metrics_frame = pd.DataFrame(metrics_rows)
-                metrics_path = output_dir / "network_metrics_by_segment_band.csv"
-                metrics_path.parent.mkdir(parents=True, exist_ok=True)
-                metrics_frame.to_csv(metrics_path, index=False)
-                figure = plot_network_metrics(
-                    metrics_frame,
-                    output_dir / "network_metrics_by_segment_band.png",
-                )
-                plt.close(figure)
-                print(f"[DONE] network report: {output_dir}")
-                print(f"[DONE] metrics: {metrics_path}")
+                    print(f"[DONE] network report: {output_dir}")
+                    print(f"[DONE] metrics: {metrics_path}")
 
     print(f"[SUMMARY] completed={completed}, skipped={skipped}")
 
