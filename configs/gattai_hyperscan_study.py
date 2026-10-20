@@ -15,10 +15,9 @@ from pathlib import Path
 
 from hyperscan_eeg.config import (
     ExperimentDesign,
-    MarkerConfig,
     MontageConfig,
     PathConfig,
-    SegmentPlan,
+    StateEventPlan,
 )
 from hyperscan_eeg.presets import EMOTIV_FLEX_SALINE_32CH_LABELS, STANDARD_EEG_FREQUENCY_BANDS
 
@@ -31,25 +30,36 @@ PATHS = PathConfig(
     figures_dir=Path("data/figures"),
 )
 
-# InletPortマーカー: このタスク制御ソフト固有の割り当て（1=タスク開始, 3=タスク終了）。
-MARKER_CFG = MarkerConfig(start_marker=1, end_marker=3)
+# 現行仕様には終了マーカーがないため、状態マーカー1から解析を開始する。
+MARKER_CFG = None
 
 MONTAGE_CFG = MontageConfig(channel_labels=EMOTIV_FLEX_SALINE_32CH_LABELS)
 
 FREQ_BANDS = STANDARD_EEG_FREQUENCY_BANDS
 
-# Pilot 1 (sub01~03) と Pilot 2 (sub04~06) の各triad内で実施したpairを列挙する。
+# 現行実験の2チーム（sub07~09、sub10~12）の各triad内pairを列挙する。
 DESIGN = ExperimentDesign(
     subjects=(7, 8, 9, 10, 11, 12),
-    conditions=("silent", "speaking"),
+    conditions=("speaking",),
     pairs=((7, 8), (7, 9), (8, 9), (10, 11), (10, 12), (11, 12)),
-    condition_segments={
-        # 「合体」マーカー(3番)を境界として、silent条件は1回(2区間)、
-        # speaking条件は2回(3区間)出現する、という実験固有の例外仕様。
-        "silent": SegmentPlan(labels=("gattai_mae", "gattai_ato"
-        ""), boundary_markers=(2,)),
-        "speaking": SegmentPlan(
-            labels=("gattai_mae", "gattai_ato"), boundary_markers=(2,)
-        ),
+    condition_segments={},
+    state_event_plans={
+        "speaking": StateEventPlan(
+            state_labels={
+                1: "both_unfused",
+                2: "own_team_fused",
+                3: "both_teams_fused",
+                4: "opponent_team_fused",
+            },
+            event_labels={
+                5: "own_special",
+                6: "opponent_special",
+            },
+            game_start_marker=1,
+            # 0～3秒はカウントダウン、3～8秒は成否決定後の5秒間。
+            event_window_seconds=8.0,
+            # 最初の必殺技マーカー（5または6）の8秒後で状態解析を終了する。
+            end_at_first_event_window=True,
+        )
     },
 )
